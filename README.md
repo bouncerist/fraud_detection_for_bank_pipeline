@@ -5,6 +5,15 @@
 -  [Additional features](#additional-features)
 -  [Detailed Description](#detailed-description)
 
+## Architecture
+
+![Architecture](https://github.com/bouncerist/images/blob/architecture/fraud_detect_pipeline_architecture.png)
+
+## Superset dashboards
+
+![Superset_cards](https://github.com/bouncerist/images/blob/superset/мошенничество-по-картам-2025-11-19T08-26-20.793Z.jpg)
+
+![Superset_countries_and_merchants](https://github.com/bouncerist/images/blob/superset/мошенничество-по-странам-и-категориям-мерчантов-2025-11-19T08-33-10.914Z.jpg)
 ## Data Storage
 ### bank_storage (OLTP, PostgreSQL): data source
 
