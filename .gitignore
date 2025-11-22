@@ -1,0 +1,8 @@
+.idea/
+airflow/airflow-db-data/
+airflow/logs/
+pg-data/
+superset/superset-data/
+superset/superset-db-data/
+airflow-trino.yml
+kafka-cdc.yml

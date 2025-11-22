@@ -1,0 +1,32 @@
+{
+  "name": "sink-transactions",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "tasks.max": "3",
+    "topics": "bank.public.transactions",
+    "connection.url": "jdbc:postgresql://dwh:5432/dwh",
+    "connection.user": "admin",
+    "connection.password": "greenplum",
+    "insert.mode": "insert",
+    "auto.create": "false",
+    "auto.evolve": "false",
+    "delete.enabled": "true",
+    "pk.mode": "record_key",
+    "pk.fields": "id",
+    "max.retries": "5",
+    "retry.backoff.ms": "2000",
+    "table.name.format": "transactions",
+    "transforms": "unwrap, convertTimestamp",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "false",
+    "transforms.unwrap.delete.handling.mode": "delete",
+    "transforms.convertTimestamp.type": "org.apache.kafka.connect.transforms.TimestampConverter$Value",
+    "transforms.convertTimestamp.field": "transaction_date",
+    "transforms.convertTimestamp.format": "yyyy-MM-dd'T'HH:mm:ss.SSS",
+    "transforms.convertTimestamp.target.type": "Timestamp",
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry-1:8081,http://schema-registry-2:8081,http://schema-registry-3:8081",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry-1:8081,http://schema-registry-2:8081,http://schema-registry-3:8081"
+  }
+}

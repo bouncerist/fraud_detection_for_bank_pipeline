@@ -1,0 +1,533 @@
+services:
+    bank_storage:
+        image: postgres:17.6
+        container_name: bank_storage
+        shm_size: '1gb'
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: bank_storage
+            POSTGRES_SHARED_BUFFERS: 1GB
+            POSTGRES_WORK_MEM: 64MB
+            POSTGRES_WAL_BUFFERS: 16MB
+            POSTGRES_MAX_WAL_SENDERS: 10
+            POSTGRES_MAX_REPLICATION_SLOTS: 10
+            TZ: Europe/Moscow
+            PGTZ: Europe/Moscow
+        ports:
+            - "5433:5432"
+        volumes:
+            - ./pg-data/bank_storage:/var/lib/postgresql/data
+            - ./sql_scripts/bank_storage:/docker-entrypoint-initdb.d
+        networks:
+            - project-net
+
+    fraud-detector:
+        image: postgres:17.6
+        container_name: fraud-detector
+        shm_size: '1gb'
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: fraud-detector
+            TZ: Europe/Moscow
+            PGTZ: Europe/Moscow
+        ports:
+            - "5434:5432"
+        volumes:
+            - ./pg-data/fraud-detector:/var/lib/postgresql/data
+            - ./sql_scripts/fraud-detector:/docker-entrypoint-initdb.d
+        networks:
+            - project-net
+
+    dwh:
+        container_name: dwh
+        image: andruche/greenplum:7
+        restart: always
+        volumes:
+            - DWH_data:/data
+        ports:
+            - "5435:5432"
+        networks:
+            - project-net
+
+    airflow-metadata:
+        image: postgres:17.6
+        environment:
+            POSTGRES_USER: airflow
+            POSTGRES_PASSWORD: airflow
+            POSTGRES_DB: airflow
+        ports:
+            - "5432:5432"
+        volumes:
+            - ./airflow/airflow-db-data:/var/lib/postgresql/data
+        healthcheck:
+            test: [ "CMD", "pg_isready", "-U", "airflow" ]
+            interval: 5s
+            retries: 5
+        restart: always
+        networks:
+            - project-net
+
+    airflow-scheduler:
+        image: my-custom-airflow:${AIRFLOW_VERSION:-2.4.1}
+        container_name: airflow-scheduler
+        build:
+            context: ./airflow/docker
+            dockerfile: Dockerfile
+            args:
+                AIRFLOW_VERSION: ${AIRFLOW_VERSION:-2.4.1}
+        command: scheduler
+        healthcheck:
+            test: [ "CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"' ]
+            interval: 10s
+            timeout: 10s
+            retries: 5
+        restart: always
+        user: "${AIRFLOW_UID:-50000}:0"
+        depends_on:
+            airflow-metadata:
+                condition: service_healthy
+            airflow-init:
+                condition: service_completed_successfully
+        env_file:
+            - airflow/airflow.env
+        volumes:
+            - ./airflow/dags:/opt/airflow/dags
+            - ./airflow/logs:/opt/airflow/logs
+        networks:
+            - project-net
+
+    airflow-webserver:
+        image: my-custom-airflow:${AIRFLOW_VERSION:-2.4.1}
+        container_name: airflow-webserver
+        build:
+            context: ./airflow/docker
+            dockerfile: Dockerfile
+            args:
+                AIRFLOW_VERSION: ${AIRFLOW_VERSION:-2.4.1}
+        command: webserver
+        healthcheck:
+            test: [ "CMD", "curl", "--fail", "http://localhost:8090/health" ]
+            interval: 10s
+            timeout: 10s
+            retries: 5
+        restart: always
+        user: "${AIRFLOW_UID:-50000}:0"
+        depends_on:
+            airflow-metadata:
+                condition: service_healthy
+            airflow-init:
+                condition: service_completed_successfully
+        env_file:
+            - airflow/airflow.env
+        volumes:
+            - ./airflow/dags:/opt/airflow/dags
+            - ./airflow/logs:/opt/airflow/logs
+        ports:
+            - "8090:8080"
+        networks:
+            - project-net
+
+    airflow-init:
+        image: my-custom-airflow:${AIRFLOW_VERSION:-2.4.1}
+        container_name: airflow-init
+        build:
+            context: ./airflow/docker
+            dockerfile: Dockerfile
+            args:
+                AIRFLOW_VERSION: ${AIRFLOW_VERSION:-2.4.1}
+        entrypoint: /opt/airflow/scripts/entrypoint.sh
+        user: "${AIRFLOW_UID:-50000}:0"
+        depends_on:
+            airflow-metadata:
+                condition: service_healthy
+        env_file:
+            - airflow/airflow.env
+        environment:
+            _AIRFLOW_WWW_USER_USERNAME: airflow_user
+            _AIRFLOW_WWW_USER_FIRSTNAME: Airflow
+            _AIRFLOW_WWW_USER_LASTNAME: Admin
+            _AIRFLOW_WWW_USER_EMAIL: airflowadmin@example.com
+            _AIRFLOW_WWW_USER_ROLE: Admin
+            _AIRFLOW_WWW_USER_PASSWORD: airflow_password
+        volumes:
+            - ./airflow/scripts:/opt/airflow/scripts
+        networks:
+            - project-net
+
+    zookeeper-1:
+        image: confluentinc/cp-zookeeper:7.9.0
+        hostname: zookeeper-1
+        container_name: zookeeper-1
+        ports:
+            - "2181:2181"
+        environment:
+            ZOOKEEPER_SERVER_ID: 1
+            ZOOKEEPER_CLIENT_PORT: 2181
+            ZOOKEEPER_TICK_TIME: 2000
+            ZOOKEEPER_INIT_LIMIT: 5
+            ZOOKEEPER_SYNC_LIMIT: 2
+            ZOOKEEPER_SERVERS: "zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888"
+        networks:
+            - project-net
+
+    zookeeper-2:
+        image: confluentinc/cp-zookeeper:7.9.0
+        hostname: zookeeper-2
+        container_name: zookeeper-2
+        ports:
+            - "2182:2181"
+        environment:
+            ZOOKEEPER_SERVER_ID: 2
+            ZOOKEEPER_CLIENT_PORT: 2181
+            ZOOKEEPER_TICK_TIME: 2000
+            ZOOKEEPER_INIT_LIMIT: 5
+            ZOOKEEPER_SYNC_LIMIT: 2
+            ZOOKEEPER_SERVERS: "zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888"
+        networks:
+            - project-net
+
+    zookeeper-3:
+        image: confluentinc/cp-zookeeper:7.9.0
+        hostname: zookeeper-3
+        container_name: zookeeper-3
+        ports:
+            - "2183:2181"
+        environment:
+            ZOOKEEPER_SERVER_ID: 3
+            ZOOKEEPER_CLIENT_PORT: 2181
+            ZOOKEEPER_TICK_TIME: 2000
+            ZOOKEEPER_INIT_LIMIT: 5
+            ZOOKEEPER_SYNC_LIMIT: 2
+            ZOOKEEPER_SERVERS: "zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888"
+        networks:
+            - project-net
+
+    kafka-1:
+        image: confluentinc/cp-kafka:7.9.0
+        hostname: kafka-1
+        container_name: kafka-1
+        depends_on:
+            - zookeeper-1
+            - zookeeper-2
+            - zookeeper-3
+        ports:
+            - "9092:9092"
+            - "29092:29092"
+        healthcheck:
+            test: [ "CMD", "nc", "-z", "kafka-1", "29092" ]
+        environment:
+            KAFKA_BROKER_ID: 1
+            KAFKA_ZOOKEEPER_CONNECT: "zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181"
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:29092,PLAINTEXT_HOST://localhost:9092
+            KAFKA_NUM_PARTITIONS: 3
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+            KAFKA_MIN_INSYNC_REPLICAS: 2
+            KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+            KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+        networks:
+            - project-net
+
+    kafka-2:
+        image: confluentinc/cp-kafka:7.9.0
+        hostname: kafka-2
+        container_name: kafka-2
+        depends_on:
+            - zookeeper-1
+            - zookeeper-2
+            - zookeeper-3
+        ports:
+            - "9093:9093"
+            - "29093:29092"
+        healthcheck:
+            test: [ "CMD", "nc", "-z", "kafka-2", "29092" ]
+        environment:
+            KAFKA_BROKER_ID: 2
+            KAFKA_ZOOKEEPER_CONNECT: "zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181"
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:29092,PLAINTEXT_HOST://localhost:9093
+            KAFKA_NUM_PARTITIONS: 3
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+            KAFKA_MIN_INSYNC_REPLICAS: 2
+            KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+            KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+        networks:
+            - project-net
+
+    kafka-3:
+        image: confluentinc/cp-kafka:7.9.0
+        hostname: kafka-3
+        container_name: kafka-3
+        depends_on:
+            - zookeeper-1
+            - zookeeper-2
+            - zookeeper-3
+        ports:
+            - "9094:9094"
+            - "29094:29092"
+        healthcheck:
+            test: [ "CMD", "nc", "-z", "kafka-3", "29092" ]
+        environment:
+            KAFKA_BROKER_ID: 3
+            KAFKA_ZOOKEEPER_CONNECT: "zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181"
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:29092,PLAINTEXT_HOST://localhost:9094
+            KAFKA_NUM_PARTITIONS: 3
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+            KAFKA_MIN_INSYNC_REPLICAS: 2
+            KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+            KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+        networks:
+            - project-net
+
+    schema-registry-1:
+        image: confluentinc/cp-schema-registry:7.9.0
+        hostname: schema-registry-1
+        container_name: schema-registry-1
+        depends_on:
+            kafka-1:
+                condition: service_healthy
+            kafka-2:
+                condition: service_healthy
+            kafka-3:
+                condition: service_healthy
+        ports:
+            - "8081:8081"
+        healthcheck:
+            test: [ "CMD", "curl", "http://schema-registry-1:8081" ]
+        environment:
+            SCHEMA_REGISTRY_HOST_NAME: schema-registry-1
+            SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+            SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+            SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry
+            SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+            SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 3
+            SCHEMA_REGISTRY_LEADER_ELIGIBILITY: true
+        networks:
+            - project-net
+
+    schema-registry-2:
+        image: confluentinc/cp-schema-registry:7.9.0
+        hostname: schema-registry-2
+        container_name: schema-registry-2
+        depends_on:
+            schema-registry-1:
+                condition: service_healthy
+        ports:
+            - "8082:8081"
+        environment:
+            SCHEMA_REGISTRY_HOST_NAME: schema-registry-2
+            SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+            SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+            SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry
+            SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+            SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 3
+            SCHEMA_REGISTRY_LEADER_ELIGIBILITY: true
+        networks:
+            - project-net
+
+    schema-registry-3:
+        image: confluentinc/cp-schema-registry:7.9.0
+        hostname: schema-registry-3
+        container_name: schema-registry-3
+        depends_on:
+            schema-registry-1:
+                condition: service_healthy
+        ports:
+            - "8084:8081"
+        environment:
+            SCHEMA_REGISTRY_HOST_NAME: schema-registry-3
+            SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+            SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+            SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry
+            SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+            SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 3
+            SCHEMA_REGISTRY_LEADER_ELIGIBILITY: true
+        networks:
+            - project-net
+
+    kafka-connect:
+        image: kafka-connect:latest
+        hostname: kafka-connect
+        container_name: kafka-connect
+        ports:
+            - 8083:8083
+        depends_on:
+            - kafka-1
+            - kafka-2
+            - kafka-3
+            - schema-registry-1
+            - schema-registry-2
+            - schema-registry-3
+        networks:
+            - project-net
+        environment:
+            CONNECT_BOOTSTRAP_SERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+            CONNECT_REST_PORT: 8083
+            CONNECT_GROUP_ID: connect-cluster
+            CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
+            CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
+            CONNECT_STATUS_STORAGE_TOPIC: connect-status
+            CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+            CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+            CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+            CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+            CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+            CONNECT_INTERNAL_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+            CONNECT_INTERNAL_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+            CONNECT_REST_ADVERTISED_HOST_NAME: localhost
+            CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry-1:8081,http://schema-registry-2:8081,http://schema-registry-3:8081"
+            CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry-1:8081,http://schema-registry-2:8081,http://schema-registry-3:8081"
+
+    ksqldb-server:
+        image: confluentinc/cp-ksqldb-server:7.9.0
+        hostname: ksqldb-server
+        container_name: ksqldb-server
+        depends_on:
+            schema-registry-1:
+                condition: service_healthy
+        ports:
+            - "8088:8088"
+        environment:
+            KSQL_CONFIG_DIR: "/etc/ksql"
+            KSQL_BOOTSTRAP_SERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+            KSQL_HOST_NAME: ksqldb-server
+            KSQL_LISTENERS: "http://0.0.0.0:8088"
+            KSQL_KSQL_SCHEMA_REGISTRY_URL: "http://schema-registry-1:8081,http://schema-registry-2:8081,http://schema-registry-3:8081"
+            KSQL_KSQL_SERVICE_ID: "ksql_service"
+            KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: 'true'
+            KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: 'true'
+        networks:
+            - project-net
+
+    ksqldb-cli:
+        image: confluentinc/cp-ksqldb-cli:7.9.0
+        container_name: ksqldb-cli
+        depends_on:
+            - ksqldb-server
+        volumes:
+            - ./ksqldb_scripts:/etc/ksql
+        entrypoint: /bin/sh
+        tty: true
+        networks:
+            - project-net
+
+    kafka-ui:
+        image: ghcr.io/kafbat/kafka-ui:latest
+        container_name: kafka-ui
+        depends_on:
+            - zookeeper-1
+            - zookeeper-2
+            - zookeeper-3
+            - kafka-1
+            - kafka-2
+            - kafka-3
+            - schema-registry-1
+            - schema-registry-2
+            - schema-registry-3
+            - kafka-connect
+            - ksqldb-server
+        ports:
+            - "8080:8080"
+        environment:
+            KAFKA_CLUSTERS_0_NAME: local
+            KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: "kafka-1:29092,kafka-2:29092,kafka-3:29092"
+            KAFKA_CLUSTERS_0_ZOOKEEPER: "zookeeper-1:2181,zookeeper-2:2181,zookeeper-3:2181"
+            KAFKA_CLUSTERS_0_SCHEMAREGISTRY: "http://schema-registry-1:8081,http://schema-registry-2:8081,http://schema-registry-3:8081"
+            KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: "kafka-connect"
+            KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+            KAFKA_CLUSTERS_0_KSQLDB_0_NAME: "ksqldb-server"
+            KAFKA_CLUSTERS_0_KSQLDB_0_ADDRESS: http://ksqldb-server:8088
+            DYNAMIC_CONFIG_ENABLED: 'true'
+        networks:
+            - project-net
+
+    superset-db:
+        image: postgres:17.6
+        container_name: superset-db
+        ports:
+            - 5436:5432
+        environment:
+            POSTGRES_DB: superset
+            POSTGRES_USER: superset
+            POSTGRES_PASSWORD: superset
+        volumes:
+            - ./superset/superset-db-data:/var/lib/postgresql/data
+        healthcheck:
+            test: [ "CMD-SHELL", "pg_isready -U superset -d superset" ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        networks:
+            - project-net
+
+    superset:
+        container_name: superset
+        build:
+            context: ./superset
+            dockerfile: Dockerfile
+        environment:
+            SUPERSET_SECRET_KEY: 123456
+            DATABASE_DB: superset
+            DATABASE_HOST: superset-db
+            DATABASE_PASSWORD: superset
+            DATABASE_USER: superset
+            DATABASE_PORT: 5432
+        ports:
+            - "8089:8088"
+        depends_on:
+            superset-db:
+                condition: service_healthy
+        volumes:
+            - ./superset/superset-data:/app/superset_home
+            - ./superset/init-superset.sh:/app/init-superset.sh
+        command: [ "sh", "/app/init-superset.sh" ]
+        networks:
+            - project-net
+
+    trino-coordinator:
+        image: trinodb/trino:477
+        container_name: trino-coordinator
+        ports:
+            - 18080:8080
+        depends_on:
+            - fraud-detector
+            - dwh
+        volumes:
+            - ./trino/coordinator:/etc/trino
+        networks:
+            - project-net
+
+    trino-worker-001:
+        image: trinodb/trino:477
+        container_name: trino-worker-001
+        depends_on:
+            - trino-coordinator
+            - fraud-detector
+            - dwh
+        volumes:
+            - ./trino/workers/1:/etc/trino
+        networks:
+            - project-net
+
+    trino-worker-002:
+        image: trinodb/trino:477
+        container_name: trino-worker-002
+        depends_on:
+            - trino-coordinator
+            - fraud-detector
+            - dwh
+        volumes:
+            - ./trino/workers/2:/etc/trino
+        networks:
+            - project-net
+
+networks:
+    project-net:
+        driver: bridge
+
+volumes:
+    DWH_data:
+        external: true
